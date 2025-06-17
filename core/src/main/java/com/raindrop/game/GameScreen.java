@@ -24,7 +24,12 @@ import java.util.Iterator;
 
 public class GameScreen implements Screen {
     final RaindropGame game;
+    private ScoreManager scoreManager;
+    private ItemManager itemManager;
+    private ScoreHistoryManager scoreHistoryManager;
 
+    private long totalScore = 0; // Tổng điểm tích lũy
+    private boolean scoreSaved = false; // Flag để kiểm tra đã lưu điểm chưa
     // Assets
     Texture raindropImage;
     Texture bucketImage;
@@ -79,10 +84,17 @@ public class GameScreen implements Screen {
 
     public GameScreen(final RaindropGame game) {
         this.game = game;
+        this.scoreManager = game.scoreManager; // Lấy từ game instance
+        this.itemManager = game.itemManager;
+        this.scoreHistoryManager = game.scoreHistoryManager;
 
         try {
             // Load images
             raindropImage = new Texture(Gdx.files.internal("tomato.png"));
+
+            // call hàm tải hình ảnh dựa trên mặt hàng được trang bị
+            loadBucketTexture();
+
             bucketImage = new Texture(Gdx.files.internal("basket.png"));
             backgroundImage = new Texture(Gdx.files.internal("backgr-play.png"));
             pauseButtonImage = new Texture(Gdx.files.internal("pause_button.png"));
@@ -114,11 +126,15 @@ public class GameScreen implements Screen {
 
             // Create Vietnamese fonts
             createVietnameseFonts();
+
         } catch (Exception e) {
             Gdx.app.error("GameScreen", "Error loading assets: " + e);
         }
 
+
+
         rainMusic.setLooping(true);
+        updateSoundSettings();
         rainMusic.play();
 
         camera = new OrthographicCamera();
@@ -165,19 +181,134 @@ public class GameScreen implements Screen {
         playAgainButton.y = continueButton.y; // Same position as continue button
 
         // Initialize colors for custom buttons
-        continueButtonColor = new Color(0.2f, 0.8f, 0.2f, 1); // Green
-        exitButtonColor = new Color(0.9f, 0.2f, 0.2f, 1); // Red
-        buttonTextColor = new Color(1, 1, 1, 1); // White
-        panelColor = new Color(0.76f, 0.6f, 0.42f, 1); // Brown (hex #C39A6B)
+        continueButtonColor = new Color(0.9f, 0.7f, 0.4f, 0.8f); // Màu cam giống StoreScreen
+        exitButtonColor = new Color(0.9f, 0.7f, 0.4f, 0.8f); // Cùng màu cam
+        buttonTextColor = new Color(0.2f, 0.1f, 0f, 1); // Màu text nâu đậm giống StoreScreen
+        panelColor = new Color(0.76f, 0.6f, 0.42f, 1); // Brown (hex #C39A6B) // Brown (hex #C39A6B)
 
         raindrops = new Array<Rectangle>();
         booms = new Array<Rectangle>(); // Initialize booms array
         spawnRaindrop();
+        loadCurrentTotalScore();
 
         isPaused = false;
         showPauseMenu = false;
         isGameOver = false;
     }
+
+    private void updateSoundSettings() {
+        boolean soundEnabled = GameSettings.isSoundEnabled();
+
+        if (soundEnabled) {
+            if (!rainMusic.isPlaying() && !isPaused && !isGameOver) {
+                rainMusic.play();
+            }
+            // Set volume to normal
+            rainMusic.setVolume(1.0f);
+        } else {
+            // Pause music if sound is disabled
+            rainMusic.pause();
+            // Set volume to 0 as backup
+            rainMusic.setVolume(0.0f);
+        }
+
+        Gdx.app.log("GameScreen", "Sound settings updated - Enabled: " + soundEnabled);
+    }
+
+    private void loadBucketTexture() {
+        String equippedItemId = itemManager.getCurrentEquippedItem();
+        String bucketTexturePath = "basket.png"; // default
+
+        if (equippedItemId != null) {
+            ItemManager.Item equippedItem = itemManager.getItem(equippedItemId);
+            if (equippedItem != null) {
+                // Map item ID to corresponding bucket texture
+                switch (equippedItemId) {
+                    case "bowl":
+                        bucketTexturePath = "bowl.png";
+                        break;
+                    case "box":
+                        bucketTexturePath = "box.png";
+                        break;
+                    case "bucket":
+                        bucketTexturePath = "bucket.png";
+                        break;
+                    case "spaceship":
+                        bucketTexturePath = "spaceship.png";
+                        break;
+                    default:
+                        bucketTexturePath = "basket.png";
+                        break;
+                }
+            }
+        }
+
+        try {
+            bucketImage = new Texture(Gdx.files.internal(bucketTexturePath));
+            Gdx.app.log("GameScreen", "Loaded bucket texture: " + bucketTexturePath);
+        } catch (Exception e) {
+            Gdx.app.error("GameScreen", "Could not load bucket texture: " + bucketTexturePath + ", using default");
+            bucketImage = new Texture(Gdx.files.internal("basket.png"));
+        }
+    }
+
+    private void loadCurrentTotalScore() {
+        if (scoreManager != null) {
+            scoreManager.getCurrentTotalScore(new ScoreManager.ScoreCallback() {
+                @Override
+                public void onSuccess(long currentTotal) {
+                    totalScore = currentTotal;
+                    Gdx.app.log("GameScreen", "Loaded total score: " + totalScore);
+                }
+
+                @Override
+                public void onFailure(String error) {
+                    Gdx.app.error("GameScreen", "Failed to load total score: " + error);
+                }
+            });
+        }
+    }
+
+    private void saveScoreToFirebase() {
+        if (scoreSaved || dropsGathered == 0 || scoreManager == null) {
+            return;
+        }
+
+        scoreSaved = true;
+
+        // Lưu vào tổng điểm
+        scoreManager.addScoreToTotal(dropsGathered, new ScoreManager.ScoreCallback() {
+            @Override
+            public void onSuccess(long newTotal) {
+                totalScore = newTotal;
+                Gdx.app.log("GameScreen", "Score saved! New total: " + newTotal);
+            }
+
+            @Override
+            public void onFailure(String error) {
+                Gdx.app.error("GameScreen", "Failed to save score: " + error);
+                scoreSaved = false;
+            }
+        });
+
+        // SỬA: Đảm bảo lưu vào lịch sử Firebase (không phải dummy)
+        if (scoreHistoryManager != null) {
+            scoreHistoryManager.saveScore("Player1", dropsGathered, new ScoreHistoryManager.SaveScoreCallback() {
+                @Override
+                public void onSuccess() {
+                    Gdx.app.log("GameScreen", "Score saved to Firebase history: " + dropsGathered);
+                }
+
+                @Override
+                public void onFailure(String error) {
+                    Gdx.app.error("GameScreen", "Failed to save score to Firebase history: " + error);
+                }
+            });
+        } else {
+            Gdx.app.error("GameScreen", "ScoreHistoryManager is null - cannot save to Firebase");
+        }
+    }
+
 
     private void createVietnameseFonts() {
         try {
@@ -233,7 +364,6 @@ public class GameScreen implements Screen {
         lastBoomTime = TimeUtils.nanoTime();
     }
 
-    // New method to reset game state
     private void resetGame() {
         // Clear objects
         raindrops.clear();
@@ -241,14 +371,17 @@ public class GameScreen implements Screen {
 
         // Reset score
         dropsGathered = 0;
+        scoreSaved = false;
 
         // Reset game state
         isGameOver = false;
         isPaused = false;
         isExploding = false;
 
-        // Start music again
-        rainMusic.play();
+        // Start music again only if sound is enabled
+        if (GameSettings.isSoundEnabled()) {
+            rainMusic.play();
+        }
 
         // Reset bucket position
         bucket.x = (float) RaindropGame.GAME_WIDTH / 2 - (float) 64 / 2;
@@ -303,7 +436,6 @@ public class GameScreen implements Screen {
                 return;
             }
         }
-
         // Regular game input
         if (Gdx.input.isTouched()) {
             touchPos.set(Gdx.input.getX(), Gdx.input.getY(), 0);
@@ -327,7 +459,11 @@ public class GameScreen implements Screen {
                 // Resume game
                 isPaused = false;
                 showPauseMenu = false;
-                rainMusic.play();
+
+                // Kiểm tra cài đặt âm thanh trước khi phát nhạc
+                if (GameSettings.isSoundEnabled()) {
+                    rainMusic.play();
+                }
             } else if (exitButton.contains(touchPos.x, touchPos.y)) {
                 // Return to main menu
                 game.setScreen(new MainMenuScreen(game));
@@ -335,6 +471,7 @@ public class GameScreen implements Screen {
             }
         }
     }
+
 
     // New method to handle game over menu input
     private void handleGameOverInput() {
@@ -370,13 +507,18 @@ public class GameScreen implements Screen {
         Iterator<Rectangle> iter = raindrops.iterator();
         while (iter.hasNext()) {
             Rectangle raindrop = iter.next();
-            raindrop.y -= 200 * delta; // Slightly faster for portrait mode
+            raindrop.y -= 200 * delta;
 
             if (raindrop.y + 64 < 0) iter.remove();
 
             if (raindrop.overlaps(bucket)) {
                 dropsGathered++;
-                raindropSound.play();
+
+                // Chỉ phát âm thanh nếu được bật
+                if (GameSettings.isSoundEnabled()) {
+                    raindropSound.play();
+                }
+
                 iter.remove();
             }
         }
@@ -385,7 +527,7 @@ public class GameScreen implements Screen {
         Iterator<Rectangle> boomIter = booms.iterator();
         while (boomIter.hasNext()) {
             Rectangle boom = boomIter.next();
-            boom.y -= 250 * delta; // Faster than raindrops
+            boom.y -= 250 * delta;
 
             if (boom.y + 64 < 0) boomIter.remove();
 
@@ -394,10 +536,13 @@ public class GameScreen implements Screen {
                 isGameOver = true;
                 rainMusic.pause();
 
-                // Play explosion sound
-                if (explosionSound != null) {
+                // Play explosion sound only if enabled
+                if (GameSettings.isSoundEnabled() && explosionSound != null) {
                     explosionSound.play();
                 }
+
+                // Save score
+                saveScoreToFirebase();
 
                 // Start explosion animation
                 isExploding = true;
@@ -422,8 +567,8 @@ public class GameScreen implements Screen {
             }
 
             // Draw score using Vietnamese font
-            vietnameseFont.setColor(1, 1, 0, 1); // Yellow color (RGBA)
-            vietnameseFont.draw(game.batch, "Tổng Điểm: " + dropsGathered, 10, RaindropGame.GAME_HEIGHT - 30);
+            vietnameseFont.setColor(0, 0, 0, 1); // Yellow color (RGBA)
+            vietnameseFont.draw(game.batch, "Score: " + dropsGathered, 10, RaindropGame.GAME_HEIGHT - 30);
             vietnameseFont.setColor(1, 1, 1, 1); // Reset to white for other text
 
             // Draw bucket and raindrops
@@ -466,6 +611,7 @@ public class GameScreen implements Screen {
         }
     }
 
+
     private void drawPauseMenu() {
         // Draw semi-transparent overlay
         game.batch.setColor(0, 0, 0, 0.5f);
@@ -484,32 +630,43 @@ public class GameScreen implements Screen {
             panelWidth, panelHeight);
         game.batch.setColor(1, 1, 1, 1); // Reset color
 
-        // Draw "Tạm Dừng" title using our Vietnamese title font
-        vietnameseTitleFont.draw(game.batch, "Tạm Dừng",
-            (float) RaindropGame.GAME_WIDTH / 2 - 70,
+        // Draw "Tạm Dừng" title using our Vietnamese title font - CĂNG GIỮA VÀ TO HƠN
+        vietnameseTitleFont.getData().setScale(1.2f); // Tăng kích thước
+        String pauseTitle = "PAUSE";
+        // FIX: Properly calculate text width for centering
+        vietnameseTitleFont.setColor(1, 1, 1, 1);
+        vietnameseTitleFont.draw(game.batch, pauseTitle,
+            (float) RaindropGame.GAME_WIDTH / 2 - pauseTitle.length() * 7, // Căn giữa tạm thời
             (float) RaindropGame.GAME_HEIGHT / 2 + 80);
+        vietnameseTitleFont.getData().setScale(1.0f); // Reset scale
 
-        // Draw continue button (green background)
-        game.batch.setColor(continueButtonColor);
+        // Draw continue button - FIX: Use orange color for entire button background
+        game.batch.setColor(continueButtonColor); // Orange background
         game.batch.draw(backgroundImage, continueButton.x, continueButton.y,
             continueButton.width, continueButton.height);
 
-        // Draw exit button (red background)
-        game.batch.setColor(exitButtonColor);
+        // Draw exit button - FIX: Use orange color for entire button background
+        game.batch.setColor(exitButtonColor); // Orange background
         game.batch.draw(backgroundImage, exitButton.x, exitButton.y,
             exitButton.width, exitButton.height);
 
         // Reset color for text
-        game.batch.setColor(buttonTextColor);
+        game.batch.setColor(1, 1, 1, 1);
 
-        // Draw button texts using our Vietnamese font
-        vietnameseFont.draw(game.batch, "Tiếp tục",
-            continueButton.x + (continueButton.width - vietnameseFont.draw(game.batch, "Tiếp tục", 0, 0).width) / 2,
-            continueButton.y + continueButton.height - 15);
+        // Draw button texts using our Vietnamese font - căn giữa text trong nút
+        String continueText = "CONTINUE";
+        String exitText = "EXIT";
 
-        vietnameseFont.draw(game.batch, "Thoát",
-            exitButton.x + (exitButton.width - vietnameseFont.draw(game.batch, "Thoát", 0, 0).width) / 2,
-            exitButton.y + exitButton.height - 15);
+        // FIX: Properly center text in continue button
+        vietnameseFont.setColor(buttonTextColor);
+        vietnameseFont.draw(game.batch, continueText,
+            continueButton.x + (continueButton.width - continueText.length() * 6) / 2,
+            continueButton.y + continueButton.height / 2 + 5);
+
+        // FIX: Properly center text in exit button
+        vietnameseFont.draw(game.batch, exitText,
+            exitButton.x + (exitButton.width - exitText.length() * 6) / 2,
+            exitButton.y + exitButton.height / 2 + 5);
 
         // Reset color
         game.batch.setColor(1, 1, 1, 1);
@@ -534,41 +691,52 @@ public class GameScreen implements Screen {
             panelWidth, panelHeight);
         game.batch.setColor(1, 1, 1, 1); // Reset color
 
-        // Draw "Game Over" title using our Vietnamese title font (red color)
+        // Draw "Game Over" title - FIX: TO HƠN VÀ CĂNG GIỮA HƠN
         vietnameseTitleFont.setColor(1, 0, 0, 1); // Red color for Game Over
-        vietnameseTitleFont.draw(game.batch, "Game Over",
-            (float) RaindropGame.GAME_WIDTH / 2 - 80,
-            (float) RaindropGame.GAME_HEIGHT / 2 + 80);
+        vietnameseTitleFont.getData().setScale(1.5f); // FIX: Tăng kích thước lên 1.5f thay vì 1.3f
+        String gameOverTitle = "Game Over";
+        // FIX: Better centering calculation
+        vietnameseTitleFont.draw(game.batch, gameOverTitle,
+            (float) RaindropGame.GAME_WIDTH / 2 - gameOverTitle.length() * 7, // FIX: Căn giữa tốt hơn
+            (float) RaindropGame.GAME_HEIGHT / 2 + 90); // FIX: Tăng vị trí lên một chút
         vietnameseTitleFont.setColor(1, 1, 1, 1); // Reset color
+        vietnameseTitleFont.getData().setScale(1.0f); // Reset scale
 
-        // Draw score
+        // Draw score - căn giữa
         vietnameseFont.setColor(1, 1, 0, 1); // Yellow for score
-        vietnameseFont.draw(game.batch, "Tổng Điểm: " + dropsGathered,
-            (float) RaindropGame.GAME_WIDTH / 2 - 60,
+        String scoreText = "Total Score: " + dropsGathered;
+        vietnameseFont.draw(game.batch, scoreText,
+            (float) RaindropGame.GAME_WIDTH / 2 - scoreText.length() * 4, // FIX: Better centering
             (float) RaindropGame.GAME_HEIGHT / 2 + 30);
         vietnameseFont.setColor(1, 1, 1, 1); // Reset color
 
-        // Draw play again button (green background)
-        game.batch.setColor(continueButtonColor);
+        // Draw play again button - FIX: Use orange color for entire button background
+        game.batch.setColor(continueButtonColor); // Orange background
         game.batch.draw(backgroundImage, playAgainButton.x, playAgainButton.y,
             playAgainButton.width, playAgainButton.height);
 
-        // Draw exit button (red background)
-        game.batch.setColor(exitButtonColor);
+        // Draw exit button - FIX: Use orange color for entire button background
+        game.batch.setColor(exitButtonColor); // Orange background
         game.batch.draw(backgroundImage, exitButton.x, exitButton.y,
             exitButton.width, exitButton.height);
 
         // Reset color for text
-        game.batch.setColor(buttonTextColor);
+        game.batch.setColor(1, 1, 1, 1);
 
-        // Draw button texts using our Vietnamese font
-        vietnameseFont.draw(game.batch, "Chơi tiếp",
-            playAgainButton.x + (playAgainButton.width - vietnameseFont.draw(game.batch, "Chơi tiếp", 0, 0).width) / 2,
-            playAgainButton.y + playAgainButton.height - 15);
+        // Draw button texts - căn giữa text trong nút
+        String playAgainText = "CONTINUE";
+        String exitText = "EXIT";
 
-        vietnameseFont.draw(game.batch, "Thoát",
-            exitButton.x + (exitButton.width - vietnameseFont.draw(game.batch, "Thoát", 0, 0).width) / 2,
-            exitButton.y + exitButton.height - 15);
+        // FIX: Properly center text in play again button
+        vietnameseFont.setColor(buttonTextColor);
+        vietnameseFont.draw(game.batch, playAgainText,
+            playAgainButton.x + (playAgainButton.width - playAgainText.length() * 6) / 2,
+            playAgainButton.y + playAgainButton.height / 2 + 5);
+
+        // FIX: Properly center text in exit button
+        vietnameseFont.draw(game.batch, exitText,
+            exitButton.x + (exitButton.width - exitText.length() * 6) / 2,
+            exitButton.y + exitButton.height / 2 + 5);
 
         // Reset color
         game.batch.setColor(1, 1, 1, 1);
@@ -580,9 +748,11 @@ public class GameScreen implements Screen {
 
     @Override
     public void show() {
+        loadBucketTexture();
         if (!isGameOver) {
             rainMusic.play();
         }
+        updateSoundSettings();
     }
 
     @Override
@@ -604,6 +774,11 @@ public class GameScreen implements Screen {
             isPaused = false;
             rainMusic.play();
         }
+        updateSoundSettings();
+    }
+
+    public void refreshSettings() {
+        updateSoundSettings();
     }
 
     @Override

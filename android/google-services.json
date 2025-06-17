@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1031481317717",
+    "project_id": "tomato-game-f5e20",
+    "storage_bucket": "tomato-game-f5e20.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1031481317717:android:794fbb01f1eff1620db7dc",
+        "android_client_info": {
+          "package_name": "com.raindrop.game"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDz9cWTdB17VNgf2v95Xiu5VueNlrzbysA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
